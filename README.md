@@ -2,6 +2,10 @@
 Finds MariaDB and MySQL Reddit posts/comments and suggests replies using GenAI.
 
 
+## Latest runs
+
+* See the [output](https://github.com/robertsilen/mariadb-reddit-helper/tree/main/output) folder
+
 ## How to run
 
 
