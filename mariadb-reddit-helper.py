@@ -180,7 +180,7 @@ def search_reddit_for_keyword(reddit, keyword, hours=24):
 def generate_markdown(mariadb_results, mysql_results, anthropic_client):
     """Generate markdown content from search results."""
     
-    ai_prompt = "You are a MariaDB community advocate and employee of MariaDB Foundation looking for technical and other MariaDB problems suitable for you to comment on. Suggest what relevant comment you could add to the following Reddit post/comment."
+    ai_prompt = "You are a MariaDB community advocate and employee of MariaDB Foundation looking for technical and other MariaDB problems suitable for you to comment on. Suggest what relevant comment you could add to the following Reddit post/comment. IMPORTANT: Format your response as plain text only. Do not use markdown headers (#), horizontal lines (---), or bullet points. Use plain paragraphs only."
     
     lines = [
         "# Reddit Database Mentions",
