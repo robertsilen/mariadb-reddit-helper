@@ -63,7 +63,7 @@ def generate_ai_suggestion(client, title, body, is_mariadb=True):
     
     try:
         message = client.messages.create(
-            model="claude-opus-4-5-20251101",
+            model="claude-sonnet-4-20250514",
             max_tokens=1024,
             messages=[
                 {"role": "user", "content": f"{prompt}\n\n{content}"}
@@ -78,6 +78,35 @@ def format_timestamp(utc_timestamp):
     """Format Unix timestamp to readable datetime."""
     dt = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def truncate_content(body, url, max_chars=1500):
+    """Truncate long content and add a link to read more."""
+    if not body or len(body) <= max_chars:
+        return body
+    
+    # Find a good breaking point (end of sentence or paragraph)
+    truncated = body[:max_chars]
+    
+    # Try to break at paragraph
+    last_para = truncated.rfind('\n\n')
+    if last_para > max_chars * 0.5:
+        truncated = truncated[:last_para]
+    else:
+        # Try to break at sentence
+        last_sentence = max(truncated.rfind('. '), truncated.rfind('! '), truncated.rfind('? '))
+        if last_sentence > max_chars * 0.5:
+            truncated = truncated[:last_sentence + 1]
+    
+    return truncated.strip() + f"\n\n*[... Click to read whole post/comment]({url})*"
+
+
+def format_body_as_blockquote(body):
+    """Format body text as markdown blockquote."""
+    lines = []
+    for line in body.split('\n'):
+        lines.append(f"> {line}")
+    return '\n'.join(lines)
 
 
 def search_reddit_for_keyword(reddit, keyword, hours=24):
@@ -177,9 +206,9 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
             lines.append(f"{format_timestamp(post['timestamp'])}")
             lines.append("")
             if post['body']:
-                # Indent post body as blockquote
-                for line in post['body'].split('\n'):
-                    lines.append(f"> {line}")
+                # Truncate for display, but send full content to AI
+                truncated_body = truncate_content(post['body'], post['url'])
+                lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
             suggestion = generate_ai_suggestion(anthropic_client, post['title'], post['body'], is_mariadb=True)
             lines.append(f"**AI suggested comment:** {suggestion}")
@@ -202,9 +231,9 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
             lines.append(f"{format_timestamp(comment['timestamp'])}")
             lines.append("")
             if comment['body']:
-                # Indent comment body as blockquote
-                for line in comment['body'].split('\n'):
-                    lines.append(f"> {line}")
+                # Truncate for display, but send full content to AI
+                truncated_body = truncate_content(comment['body'], comment['comment_url'])
+                lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
             suggestion = generate_ai_suggestion(anthropic_client, comment['post_title'], comment['body'], is_mariadb=True)
             lines.append(f"**AI suggested comment:** {suggestion}")
@@ -227,9 +256,9 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
             lines.append(f"{format_timestamp(post['timestamp'])}")
             lines.append("")
             if post['body']:
-                # Indent post body as blockquote
-                for line in post['body'].split('\n'):
-                    lines.append(f"> {line}")
+                # Truncate for display, but send full content to AI
+                truncated_body = truncate_content(post['body'], post['url'])
+                lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
             suggestion = generate_ai_suggestion(anthropic_client, post['title'], post['body'], is_mariadb=False)
             lines.append(f"**AI suggested comment:** {suggestion}")
@@ -252,9 +281,9 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
             lines.append(f"{format_timestamp(comment['timestamp'])}")
             lines.append("")
             if comment['body']:
-                # Indent comment body as blockquote
-                for line in comment['body'].split('\n'):
-                    lines.append(f"> {line}")
+                # Truncate for display, but send full content to AI
+                truncated_body = truncate_content(comment['body'], comment['comment_url'])
+                lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
             suggestion = generate_ai_suggestion(anthropic_client, comment['post_title'], comment['body'], is_mariadb=False)
             lines.append(f"**AI suggested comment:** {suggestion}")
