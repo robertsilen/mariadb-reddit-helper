@@ -5,7 +5,7 @@ Searches for MariaDB and MySQL Reddit posts/comments from past 24 hours and sugg
 
 * See the [output](https://github.com/robertsilen/mariadb-reddit-helper/tree/main/output) folder
 
-## How to run
+## How to run manually
 
 Create API-keys and add to `set_env.sh`
 * Reddit: https://www.reddit.com/prefs/apps
