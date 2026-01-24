@@ -10,9 +10,30 @@ Requires Reddit API credentials. Set up at https://www.reddit.com/prefs/apps
 
 import praw
 import anthropic
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+
+def load_prompt():
+    """Load the active prompt from prompts.json."""
+    prompts_file = Path(__file__).parent / "prompts.json"
+    
+    if not prompts_file.exists():
+        raise FileNotFoundError(
+            f"prompts.json not found at {prompts_file}\n"
+            "Please create a prompts.json file with your prompts."
+        )
+    
+    with open(prompts_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    for prompt_config in data['prompts']:
+        if prompt_config.get('use', False):
+            return prompt_config['prompt'], prompt_config.get('name', 'unnamed')
+    
+    raise ValueError("No prompt with 'use': true found in prompts.json")
 
 
 def get_reddit_client():
@@ -55,12 +76,8 @@ def get_anthropic_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
-def generate_ai_suggestion(client, title, body, is_mariadb=True):
+def generate_ai_suggestion(client, prompt, title, body):
     """Generate an AI suggested comment for a Reddit post/comment."""
-    prompt = """You are a MariaDB community advocate and employee of MariaDB Foundation looking for technical and other MariaDB problems suitable for you to comment on. Suggest what relevant comment you could add to the following Reddit post/comment.
-
-IMPORTANT: Format your response as plain text only. Do not use markdown headers (#), horizontal lines (---), or bullet points. Use plain paragraphs only."""
-    
     content = f"Title: {title}\n\n{body}" if body else f"Title: {title}"
     
     try:
@@ -180,7 +197,17 @@ def search_reddit_for_keyword(reddit, keyword, hours=24):
 def generate_markdown(mariadb_results, mysql_results, anthropic_client):
     """Generate markdown content from search results."""
     
-    ai_prompt = "You are a MariaDB community advocate and employee of MariaDB Foundation looking for technical and other MariaDB problems suitable for you to comment on. Suggest what relevant comment you could add to the following Reddit post/comment. IMPORTANT: Format your response as plain text only. Do not use markdown headers (#), horizontal lines (---), or bullet points. Use plain paragraphs only."
+    # Load the active prompt
+    ai_prompt, prompt_name = load_prompt()
+    
+    # Find posts/comments that mention both MariaDB and MySQL
+    mariadb_post_urls = {p['url'] for p in mariadb_results['posts']}
+    mysql_post_urls = {p['url'] for p in mysql_results['posts']}
+    both_posts = mariadb_post_urls & mysql_post_urls
+    
+    mariadb_comment_urls = {c['comment_url'] for c in mariadb_results['comments']}
+    mysql_comment_urls = {c['comment_url'] for c in mysql_results['comments']}
+    both_comments = mariadb_comment_urls & mysql_comment_urls
     
     lines = [
         "# Reddit Database Mentions",
@@ -189,8 +216,9 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
         "",
         f"* **MariaDB:** {len(mariadb_results['posts'])} posts, {len(mariadb_results['comments'])} comments",
         f"* **MySQL:** {len(mysql_results['posts'])} posts, {len(mysql_results['comments'])} comments",
+        f"* **Both MariaDB and MySQL:** {len(both_posts)} posts, {len(both_comments)} comments",
         "",
-        f"**AI prompt:** {ai_prompt}",
+        f"**AI prompt ({prompt_name}):** {ai_prompt}",
         "",
         "---",
         "",
@@ -212,7 +240,7 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
                 truncated_body = truncate_content(post['body'], post['url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, post['title'], post['body'], is_mariadb=True)
+            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
             lines.append(f"**AI suggested comment:** {suggestion}")
             lines.append("")
     else:
@@ -237,7 +265,7 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
                 truncated_body = truncate_content(comment['body'], comment['comment_url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, comment['post_title'], comment['body'], is_mariadb=True)
+            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, comment['post_title'], comment['body'])
             lines.append(f"**AI suggested comment:** {suggestion}")
             lines.append("")
     else:
@@ -262,7 +290,7 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
                 truncated_body = truncate_content(post['body'], post['url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, post['title'], post['body'], is_mariadb=False)
+            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
             lines.append(f"**AI suggested comment:** {suggestion}")
             lines.append("")
     else:
@@ -287,7 +315,7 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
                 truncated_body = truncate_content(comment['body'], comment['comment_url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, comment['post_title'], comment['body'], is_mariadb=False)
+            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, comment['post_title'], comment['body'])
             lines.append(f"**AI suggested comment:** {suggestion}")
             lines.append("")
     else:

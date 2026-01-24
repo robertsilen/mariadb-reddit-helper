@@ -24,4 +24,5 @@ python mariadb-reddit-helper.py # runs script
 ## Todo, wish list
 
 * Set a Github action in the repo to run the script daily. Requires setting API-keys as secrets in the github repo.
-* Tweak GenAI prompt to produce as usable prompt as possible. Possibly taking different type of context into account.
+* Tweak GenAI prompt: have now made easier with prompts in prompts.json
+* Perhaps take whole post into account when generating comment, Cbeck if post already contains solution.
