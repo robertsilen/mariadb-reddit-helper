@@ -131,8 +131,7 @@ def format_body_as_blockquote(body):
 def search_reddit_for_keyword(reddit, keyword, hours=24):
     """Search Reddit for all mentions of a keyword in the past specified hours."""
     results = {
-        'posts': [],
-        'comments': []
+        'posts': []
     }
     
     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -161,37 +160,43 @@ def search_reddit_for_keyword(reddit, keyword, hours=24):
     except Exception as e:
         print(f"  Error searching posts: {e}")
     
-    # Search for comments containing the keyword
-    print("\nSearching comments...")
-    try:
-        for comment in reddit.subreddit("all").comments(limit=1000):
-            if comment.created_utc >= cutoff_timestamp:
-                if comment.body and keyword.lower() in comment.body.lower():
-                    # Get the parent post title
-                    try:
-                        submission = comment.submission
-                        post_title = submission.title
-                        post_url = f"https://reddit.com{submission.permalink}"
-                    except Exception:
-                        post_title = "[Unable to fetch post title]"
-                        post_url = ""
-                    
-                    results['comments'].append({
-                        'post_title': post_title,
-                        'post_url': post_url,
-                        'comment_url': f"https://reddit.com{comment.permalink}",
-                        'subreddit': comment.subreddit.display_name,
-                        'timestamp': comment.created_utc,
-                        'body': comment.body
-                    })
-                    print(f"  Found comment in r/{comment.subreddit.display_name}")
-            elif comment.created_utc < cutoff_timestamp:
-                # Comments are sorted by new, so we can stop if we're past the cutoff
-                break
-    except Exception as e:
-        print(f"  Error searching comments: {e}")
-    
     return results
+
+
+def extract_category(suggestion):
+    """Extract the category from an AI suggestion response."""
+    # The category should be the first line
+    first_line = suggestion.strip().split('\n')[0].strip()
+    
+    # List of valid categories
+    valid_categories = [
+        "Technical Support", "Bug Report", "Migration Question", 
+        "Performance Issue", "General Discussion", "Job Posting", 
+        "Spam", "Other"
+    ]
+    
+    for category in valid_categories:
+        if category.lower() in first_line.lower():
+            return category
+    
+    return "Other"
+
+
+def count_categories(items):
+    """Count occurrences of each category."""
+    counts = {}
+    for item in items:
+        category = item.get('category', 'Other')
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def format_category_counts(counts):
+    """Format category counts as a string."""
+    if not counts:
+        return "none"
+    parts = [f"{count} {cat}" for cat, count in sorted(counts.items(), key=lambda x: -x[1])]
+    return ", ".join(parts)
 
 
 def generate_markdown(mariadb_results, mysql_results, anthropic_client):
@@ -200,23 +205,40 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
     # Load the active prompt
     ai_prompt, prompt_name = load_prompt()
     
-    # Find posts/comments that mention both MariaDB and MySQL
+    # Generate AI suggestions for all items first
+    print("\nGenerating AI suggestions for MariaDB posts...")
+    for i, post in enumerate(mariadb_results['posts']):
+        print(f"  MariaDB post {i+1}/{len(mariadb_results['posts'])}...")
+        suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
+        post['ai_suggestion'] = suggestion
+        post['category'] = extract_category(suggestion)
+    
+    print("\nGenerating AI suggestions for MySQL posts...")
+    for i, post in enumerate(mysql_results['posts']):
+        print(f"  MySQL post {i+1}/{len(mysql_results['posts'])}...")
+        suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
+        post['ai_suggestion'] = suggestion
+        post['category'] = extract_category(suggestion)
+    
+    # Count categories
+    mariadb_post_categories = count_categories(mariadb_results['posts'])
+    mysql_post_categories = count_categories(mysql_results['posts'])
+    
+    # Find posts that mention both MariaDB and MySQL
     mariadb_post_urls = {p['url'] for p in mariadb_results['posts']}
     mysql_post_urls = {p['url'] for p in mysql_results['posts']}
     both_posts = mariadb_post_urls & mysql_post_urls
-    
-    mariadb_comment_urls = {c['comment_url'] for c in mariadb_results['comments']}
-    mysql_comment_urls = {c['comment_url'] for c in mysql_results['comments']}
-    both_comments = mariadb_comment_urls & mysql_comment_urls
     
     lines = [
         "# Reddit Database Mentions",
         "",
         f"*Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} | Last 24 hours*",
         "",
-        f"* **MariaDB:** {len(mariadb_results['posts'])} posts, {len(mariadb_results['comments'])} comments",
-        f"* **MySQL:** {len(mysql_results['posts'])} posts, {len(mysql_results['comments'])} comments",
-        f"* **Both MariaDB and MySQL:** {len(both_posts)} posts, {len(both_comments)} comments",
+        f"* **MariaDB:** {len(mariadb_results['posts'])} posts",
+        f"  * {format_category_counts(mariadb_post_categories)}",
+        f"* **MySQL:** {len(mysql_results['posts'])} posts",
+        f"  * {format_category_counts(mysql_post_categories)}",
+        f"* **Both MariaDB and MySQL:** {len(both_posts)} posts",
         "",
         f"**AI prompt ({prompt_name}):** {ai_prompt}",
         "",
@@ -230,46 +252,18 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
     
     if mariadb_results['posts']:
         sorted_posts = sorted(mariadb_results['posts'], key=lambda x: x['timestamp'], reverse=True)
-        for i, post in enumerate(sorted_posts):
-            print(f"  Generating AI suggestion for MariaDB post {i+1}/{len(sorted_posts)}...")
+        for post in sorted_posts:
             lines.append(f"### [r/{post['subreddit']}](https://reddit.com/r/{post['subreddit']}) – [{post['title']}]({post['url']})")
             lines.append(f"{format_timestamp(post['timestamp'])}")
             lines.append("")
             if post['body']:
-                # Truncate for display, but send full content to AI
                 truncated_body = truncate_content(post['body'], post['url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
-            lines.append(f"**AI suggested comment:** {suggestion}")
+            lines.append(f"**AI suggested comment:** {post['ai_suggestion']}")
             lines.append("")
     else:
         lines.append("*No posts found.*")
-        lines.append("")
-    
-    # MariaDB Comments
-    lines.append("---")
-    lines.append("")
-    lines.append("## MariaDB: Comments")
-    lines.append("")
-    
-    if mariadb_results['comments']:
-        sorted_comments = sorted(mariadb_results['comments'], key=lambda x: x['timestamp'], reverse=True)
-        for i, comment in enumerate(sorted_comments):
-            print(f"  Generating AI suggestion for MariaDB comment {i+1}/{len(sorted_comments)}...")
-            lines.append(f"### [r/{comment['subreddit']}](https://reddit.com/r/{comment['subreddit']}) – [{comment['post_title']}]({comment['comment_url']})")
-            lines.append(f"{format_timestamp(comment['timestamp'])}")
-            lines.append("")
-            if comment['body']:
-                # Truncate for display, but send full content to AI
-                truncated_body = truncate_content(comment['body'], comment['comment_url'])
-                lines.append(format_body_as_blockquote(truncated_body))
-                lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, comment['post_title'], comment['body'])
-            lines.append(f"**AI suggested comment:** {suggestion}")
-            lines.append("")
-    else:
-        lines.append("*No comments found.*")
         lines.append("")
     
     # MySQL Posts
@@ -280,46 +274,18 @@ def generate_markdown(mariadb_results, mysql_results, anthropic_client):
     
     if mysql_results['posts']:
         sorted_posts = sorted(mysql_results['posts'], key=lambda x: x['timestamp'], reverse=True)
-        for i, post in enumerate(sorted_posts):
-            print(f"  Generating AI suggestion for MySQL post {i+1}/{len(sorted_posts)}...")
+        for post in sorted_posts:
             lines.append(f"### [r/{post['subreddit']}](https://reddit.com/r/{post['subreddit']}) – [{post['title']}]({post['url']})")
             lines.append(f"{format_timestamp(post['timestamp'])}")
             lines.append("")
             if post['body']:
-                # Truncate for display, but send full content to AI
                 truncated_body = truncate_content(post['body'], post['url'])
                 lines.append(format_body_as_blockquote(truncated_body))
                 lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, post['title'], post['body'])
-            lines.append(f"**AI suggested comment:** {suggestion}")
+            lines.append(f"**AI suggested comment:** {post['ai_suggestion']}")
             lines.append("")
     else:
         lines.append("*No posts found.*")
-        lines.append("")
-    
-    # MySQL Comments
-    lines.append("---")
-    lines.append("")
-    lines.append("## MySQL: Comments")
-    lines.append("")
-    
-    if mysql_results['comments']:
-        sorted_comments = sorted(mysql_results['comments'], key=lambda x: x['timestamp'], reverse=True)
-        for i, comment in enumerate(sorted_comments):
-            print(f"  Generating AI suggestion for MySQL comment {i+1}/{len(sorted_comments)}...")
-            lines.append(f"### [r/{comment['subreddit']}](https://reddit.com/r/{comment['subreddit']}) – [{comment['post_title']}]({comment['comment_url']})")
-            lines.append(f"{format_timestamp(comment['timestamp'])}")
-            lines.append("")
-            if comment['body']:
-                # Truncate for display, but send full content to AI
-                truncated_body = truncate_content(comment['body'], comment['comment_url'])
-                lines.append(format_body_as_blockquote(truncated_body))
-                lines.append("")
-            suggestion = generate_ai_suggestion(anthropic_client, ai_prompt, comment['post_title'], comment['body'])
-            lines.append(f"**AI suggested comment:** {suggestion}")
-            lines.append("")
-    else:
-        lines.append("*No comments found.*")
         lines.append("")
     
     return "\n".join(lines)
@@ -365,8 +331,8 @@ def main():
     output_file.write_text(markdown_content, encoding='utf-8')
     
     print(f"\n✓ Results saved to: {output_file}")
-    print(f"  MariaDB - Posts: {len(mariadb_results['posts'])}, Comments: {len(mariadb_results['comments'])}")
-    print(f"  MySQL - Posts: {len(mysql_results['posts'])}, Comments: {len(mysql_results['comments'])}")
+    print(f"  MariaDB: {len(mariadb_results['posts'])} posts")
+    print(f"  MySQL: {len(mysql_results['posts'])} posts")
 
 
 if __name__ == "__main__":
